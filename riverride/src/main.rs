@@ -1,5 +1,4 @@
-use std::io::{stdout, Stdout, Write};
-
+// use core::time;
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
     event::{self, KeyCode},
@@ -8,7 +7,8 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ScrollUp, SetSize},
     ExecutableCommand, QueueableCommand,
 };
-use std::{io, time::Duration};
+use std::io::{stdout, Result, Stdout, Write};
+use std::{io, thread, time};
 
 use crossterm::event::{poll, read, Event};
 
@@ -18,6 +18,7 @@ struct World {
     player_c: u16,
     player_l: u16,
     map: Vec<(u16, u16)>,
+    died: bool,
 }
 
 fn draw(mut sc: &Stdout, world: &World) -> std::io::Result<()> {
@@ -41,6 +42,25 @@ fn draw(mut sc: &Stdout, world: &World) -> std::io::Result<()> {
     Ok(())
 }
 
+fn pysics(mut world: World) -> Result<World> {
+    // check if player died
+    if (world.player_c <= world.map[world.player_l as usize].0
+        || world.player_c >= world.map[world.player_l as usize].1)
+    {
+        world.died = true;
+    }
+
+    // shift the map
+    for l in (0..world.map.len() - 1).rev() {
+        world.map[l + 1] = world.map[l]
+    }
+    if world.map[0].0 > 2 {
+        world.map[0] = (world.map[0].0 - 1, world.map[0].1 + 1);
+    }
+
+    Ok((world))
+}
+
 fn main() -> std::io::Result<()> {
     //
 
@@ -57,24 +77,30 @@ fn main() -> std::io::Result<()> {
         player_c: (maxC / 2),
         player_l: (maxL - 1),
         map: vec![(maxC / 2 - 5, maxC / 2 + 5); maxL as usize],
+        died: false,
     };
 
     // init the game
 
-    loop {
+    while !world.died {
         // read and apply keyboard
 
         // pysics
-
+        world = pysics(world).unwrap();
         // draw
 
         draw(&sc, &world);
 
         // `poll()` waits for an `Event` for a given time period
-        if poll(Duration::from_millis(10))? {
+        if poll(time::Duration::from_millis(10))? {
             // It's guaranteed that the `read()` won't block when the `poll()`
             // function returns `true`
             let key = read().unwrap();
+
+            // clear the buffer
+            while poll(time::Duration::from_millis(10)).unwrap() {
+                let _ = read();
+            }
 
             match key {
                 Event::Key(event) => match event.code {
@@ -114,6 +140,10 @@ fn main() -> std::io::Result<()> {
         }
 
         draw(&sc, &world);
+        let ten_millis = time::Duration::from_millis(100);
+        let now = time::Instant::now();
+
+        thread::sleep(ten_millis);
     }
 
     disable_raw_mode();
