@@ -17,6 +17,30 @@ use crossterm::event::{poll, read, Event};
 
 use rand::Rng;
 
+// low number = more speed
+const GAME_SPEED: u64 = 200;
+// 1~10 (low number = more chance)
+const MAP_SHIFT_CHANCE: u16 = 4;
+const MAP_GAP: u16 = 10;
+const MAP_GENERATE_RATE: u16 = 20;
+// 1~10 (low number = more chance)
+const ENEMY_RATE: u16 = 8;
+const ENEMY_MAX: u16 = 8;
+const BULLET_MAX: u16 = 8;
+// 1=10% screen .. 100=100% screen
+const BULLET_ENERGY: u16 = 80;
+
+struct Enemy {
+    l: u16,
+    c: u16,
+    // life: u16, // if hit bullet-> life -= bullet(power), if life==0-> pop
+}
+struct Bullet {
+    l: u16,
+    c: u16,
+    // power: u16,
+    energy: u16,
+}
 struct World {
     maxC: u16,
     maxL: u16,
@@ -26,23 +50,29 @@ struct World {
     died: bool,
     nextStart: u16,
     nextEnd: u16,
+    enemy: Vec<Enemy>,
+    bullet: Vec<Bullet>,
 }
 
-// 1~10 (low number = more chance)
-const MAP_SHIFT_CHANCE: u16 = 4;
-const MAP_GAP: u16 = 10;
-const MAP_GENERATE_RATE: u16 = 20;
-
-fn draw(mut sc: &Stdout, world: &World) -> std::io::Result<()> {
+fn draw(mut sc: &mut Stdout, world: &mut World) -> std::io::Result<()> {
     sc.queue(Clear(crossterm::terminal::ClearType::All))?;
 
     // draw the map
     for l in 0..world.map.len() {
-        sc.queue(MoveTo(0, l as u16))?;
-        sc.queue(Print("+".repeat(world.map[l].0 as usize)))?;
+        sc.queue(MoveTo(0, l as u16))?
+            .queue(Print("+".repeat(world.map[l].0 as usize)))?
+            .queue(MoveTo(world.map[l].1, l as u16))?
+            .queue(Print("+".repeat((world.maxC - world.map[l].1) as usize)))?;
+    }
 
-        sc.queue(MoveTo(world.map[l].1, l as u16))?;
-        sc.queue(Print("+".repeat((world.maxC - world.map[l].1) as usize)))?;
+    // draw the enemies
+    for e in &world.enemy {
+        sc.queue(MoveTo(e.c, e.l))?.queue(Print("E"))?;
+    }
+
+    // draw the bullets
+    for e in &world.bullet {
+        sc.queue(MoveTo(e.c, e.l))?.queue(Print("."))?;
     }
 
     // draw the player
@@ -54,9 +84,9 @@ fn draw(mut sc: &Stdout, world: &World) -> std::io::Result<()> {
     Ok(())
 }
 
-fn pysics(mut world: World) -> Result<World> {
+fn pysics(world: &mut World) {
     // check if player died
-    if (world.player_c <= world.map[world.player_l as usize].0
+    if (world.player_c < world.map[world.player_l as usize].0
         || world.player_c >= world.map[world.player_l as usize].1)
     {
         world.died = true;
@@ -107,7 +137,43 @@ fn pysics(mut world: World) -> Result<World> {
         }
     }
 
-    Ok((world))
+    // move and add enemies
+    if rng.gen_range(0..10) >= ENEMY_RATE && world.enemy.len() < ENEMY_MAX as usize {
+        let new_c = rng.gen_range(world.map[0].0..world.map[0].1);
+        world.enemy.push(Enemy { c: new_c, l: 0 });
+    }
+    for i in (0..world.enemy.len()).rev() {
+        if world.player_c == world.enemy[i].c && world.player_l == world.enemy[i].l {
+            world.died = true;
+        }
+        for b in (0..world.bullet.len()).rev() {
+            if world.enemy[i].c == world.bullet[b].c
+                && (world.enemy[i].l == world.bullet[b].l
+                    || world.enemy[i].l == world.bullet[b].l + 1)
+            {
+                world.enemy.remove(i);
+                world.bullet.remove(b);
+            }
+        }
+
+        world.enemy[i].l += 1;
+        if world.enemy[i].l > world.maxL - 1 {
+            world.enemy.remove(i);
+        }
+    }
+
+    // move bullets
+    for i in (0..world.bullet.len()).rev() {
+        if world.bullet[i].energy == 0 {
+            world.bullet.remove(i);
+        } else {
+            world.bullet[i].l -= 1;
+            world.bullet[i].energy -= 1;
+            if world.bullet[i].l == 0 {
+                world.bullet[i].energy = 0;
+            }
+        }
+    }
 }
 
 fn main() -> std::io::Result<()> {
@@ -129,18 +195,14 @@ fn main() -> std::io::Result<()> {
         died: false,
         nextStart: maxC / 2 - MAP_GAP - 1,
         nextEnd: maxC / 2 + MAP_GAP + 1,
+        enemy: vec![],
+        bullet: vec![],
     };
 
     // init the game
 
     while !world.died {
         // read and apply keyboard
-
-        // pysics
-        world = pysics(world).unwrap();
-        // draw
-
-        draw(&sc, &world);
 
         // `poll()` waits for an `Event` for a given time period
         if poll(time::Duration::from_millis(10))? {
@@ -182,6 +244,16 @@ fn main() -> std::io::Result<()> {
                             world.player_c -= 1;
                         }
                     }
+                    KeyCode::Char(' ') => {
+                        // left
+                        if world.bullet.len() < BULLET_MAX as usize {
+                            world.bullet.push(Bullet {
+                                c: world.player_c,
+                                l: world.player_l - 1,
+                                energy: world.maxL * BULLET_ENERGY / 100,
+                            });
+                        }
+                    }
                     _ => {}
                 },
                 _ => {}
@@ -190,8 +262,13 @@ fn main() -> std::io::Result<()> {
             // Timeout expired and no `Event` is available
         }
 
-        draw(&sc, &world);
-        let ten_millis = time::Duration::from_millis(100);
+        // draw
+        draw(&mut sc, &mut world);
+
+        // pysics
+        pysics(&mut world);
+
+        let ten_millis = time::Duration::from_millis(GAME_SPEED);
         let now = time::Instant::now();
 
         thread::sleep(ten_millis);
