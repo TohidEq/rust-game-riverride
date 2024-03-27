@@ -27,6 +27,8 @@ const MAP_GENERATE_RATE: u16 = 20;
 const ENEMY_RATE: u16 = 8;
 const ENEMY_MAX: u16 = 8;
 const BULLET_MAX: u16 = 8;
+const GOLD_RATE: u16 = 8;
+const GOLD_MAX: u16 = 8;
 // 1=10% screen .. 100=100% screen
 const BULLET_ENERGY: u16 = 80;
 
@@ -41,6 +43,10 @@ struct Bullet {
     // power: u16,
     energy: u16,
 }
+struct Gold {
+    l: u16,
+    c: u16,
+}
 struct World {
     maxC: u16,
     maxL: u16,
@@ -52,6 +58,8 @@ struct World {
     nextEnd: u16,
     enemy: Vec<Enemy>,
     bullet: Vec<Bullet>,
+    gold: Vec<Gold>,
+    score: u16,
 }
 
 fn draw(mut sc: &mut Stdout, world: &mut World) -> std::io::Result<()> {
@@ -68,6 +76,11 @@ fn draw(mut sc: &mut Stdout, world: &mut World) -> std::io::Result<()> {
     // draw the enemies
     for e in &world.enemy {
         sc.queue(MoveTo(e.c, e.l))?.queue(Print("E"))?;
+    }
+
+    // draw the Golds
+    for e in &world.gold {
+        sc.queue(MoveTo(e.c, e.l))?.queue(Print("G"))?;
     }
 
     // draw the bullets
@@ -162,6 +175,23 @@ fn pysics(world: &mut World) {
         }
     }
 
+    // move and add Golds
+    if rng.gen_range(0..10) >= GOLD_RATE && world.gold.len() < GOLD_MAX as usize {
+        let new_c = rng.gen_range(world.map[0].0..world.map[0].1);
+        world.gold.push(Gold { c: new_c, l: 0 });
+    }
+    for i in (0..world.gold.len()).rev() {
+        if world.player_c == world.gold[i].c && world.player_l == world.gold[i].l {
+            world.gold.remove(i);
+            world.score += 1;
+        } else {
+            world.gold[i].l += 1;
+            if world.gold[i].l > world.maxL - 1 {
+                world.gold.remove(i);
+            }
+        }
+    }
+
     // move bullets
     for i in (0..world.bullet.len()).rev() {
         if world.bullet[i].energy == 0 {
@@ -197,6 +227,8 @@ fn main() -> std::io::Result<()> {
         nextEnd: maxC / 2 + MAP_GAP + 1,
         enemy: vec![],
         bullet: vec![],
+        gold: vec![],
+        score: 0,
     };
 
     // init the game
